@@ -45,14 +45,33 @@ func (c *Conn) Close() error {
 // https://tools.ietf.org/html/rfc6455#section-5.6
 type MessageType int
 
+// Message types as defined in the WebSocket protocol.
+//
+// https://tools.ietf.org/html/rfc6455#section-5.6
 const (
+	// TextMessage is a text message.
 	TextMessage MessageType = 1 + iota
+	// BinaryMessage is a binary message.
 	BinaryMessage
+	// CloseMessage is a close control message.
 	CloseMessage
+	// PingMessage is a ping control message.
 	PingMessage
+	// PongMessage is a pong control message.
 	PongMessage
+	// ContinuationMessage is a continuation message.
+	ContinuationMessage
+	// ControlMessage is a control message.
+	ControlMessage
+	// DataMessage is a data message.
+	DataMessage
+	// UnknownMessage is an unknown message.
+	UnknownMessage
+	// ReservedMessage is a reserved message.
+	ReservedMessage
 )
 
+// String returns the string representation of the message type.
 func (m MessageType) String() string {
 	switch m {
 	case TextMessage:
@@ -82,8 +101,33 @@ func (c *Conn) WriteMessage(messageType int, data []byte) error {
 	return nil
 }
 
+// SetReadDeadline sets the read deadline on the underlying connection.
 func (c *Conn) SetWriteDeadline(t time.Time) error {
 	return c.raw.SetWriteDeadline(t)
+}
+
+// SetReadDeadline sets the read deadline on the underlying connection.
+func (c *Conn) SetReadDeadline(t time.Time) error {
+	return c.raw.SetReadDeadline(t)
+}
+
+// SetDeadline sets the read and write deadlines on the underlying connection.
+func (c *Conn) SetDeadline(t time.Time) error {
+	return c.raw.SetDeadline(t)
+}
+
+// ReadMessage reads a message from the connection. The message type and
+// payload are returned. The message type will be either TextMessage or
+// BinaryMessage. The allowed message types are the same as those defined
+// in the WebSocket protocol.
+//
+// The payload is unmasked.
+func (c *Conn) ReadMessage() (MessageType, []byte, error) {
+	frame, err := c.ReadFrame()
+	if err != nil {
+		return 0, nil, err
+	}
+	return frame.MessageType(), frame.Payload(), nil
 }
 
 // Frame is a single WebSocket frame. It is a slice of bytes that contains
@@ -196,6 +240,54 @@ func NewFrame(messageType MessageType, payload []byte) Frame {
 	return frame
 }
 
+// func (f Frame) Valid() bool {
+// 	if f == nil || len(f) < 2 {
+// 		return false
+// 	}
+//
+// 	// The first byte contains the frame type and flags.
+// 	// The frame type is the 4 least significant bits of the first byte.
+// 	// The flags are the 4 most significant bits of the first byte.
+// 	// The frame type must be either 1 (text) or 2 (binary).
+// 	// The flags must be 0.
+// 	// The frame type and flags are combined into the first byte.
+// 	if f[0]&0x70 != 0 {
+// 		return false
+// 	}
+//
+// 	// The second byte contains the payload length.
+// 	// The payload length is the 7 least significant bits of the second byte.
+// 	// If the payload length is less than 126, then the payload length is the
+// 	// 7 least significant bits of the second byte.
+// 	// If the payload length is less than 65536, then the payload length is 126
+// 	// and the next two bytes contain the payload length.
+// 	// If the payload length is greater than or equal to 65536, then the
+// 	// payload length is 127 and the next eight bytes contain the payload
+// 	// length.
+// 	payloadLength := int(f[1] & 0x7f)
+// 	if payloadLength == 126 {
+// 		payloadLength = int(binary.BigEndian.Uint16(f[2:4]))
+// 	}
+//
+// 	if payloadLength == 127 {
+// 		payloadLength = int(binary.BigEndian.Uint64(f[2:10]))
+// 	}
+//
+// 	// The frame header is always two bytes long, plus the masking key
+// 	// (4 bytes) and the payload.
+// 	if len(f) != 2+4+payloadLength {
+// 		return false
+// 	}
+//
+// 	// The mask bit, which is the 8th bit of the second byte of the frame
+// 	// header, must be set.
+// 	if f[1]&0x80 == 0 {
+// 		return false
+// 	}
+//
+// 	return true
+// }
+
 func (f Frame) Bytes() []byte {
 	return f
 }
@@ -204,7 +296,7 @@ func (f Frame) String() string {
 	payload := f.Payload()
 
 	return fmt.Sprintf(
-		"Frame{Type: %v, Size: %d, Mask:%s, Payload: %s}",
+		"websocket.Frame{Type: %v, Size: %d, Mask:%s, Payload: %s}",
 		f.MessageType(),
 		len(payload),
 		hex.EncodeToString(f.MaskKey()),
