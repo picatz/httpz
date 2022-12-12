@@ -11,7 +11,7 @@ import (
 	"github.com/picatz/httpz/pkg/websocket"
 )
 
-func TestwebsocketFrameMask(t *testing.T) {
+func TestWebsocketFrameMask(t *testing.T) {
 	t.Run("simple", func(t *testing.T) {
 		frame := websocket.NewFrame(websocket.TextMessage, []byte("Hello"))
 
