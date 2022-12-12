@@ -148,32 +148,32 @@ type FrameMask [4]byte
 // NewFrame creates a new frame with the given message type and payload.
 // The frame is masked using a randomly generated mask key.
 //
-// 0                   1                   2                   3
-// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-// +-+-+-+-+-------+-+-------------+-------------------------------+
-// |F|R|R|R| opcode|M| Payload len |    Extended payload length    |
-// |I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
-// |N|V|V|V|       |S|             |   (if payload len==126/127)   |
-// | |1|2|3|       |K|             |                               |
-// +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
-// |     Extended payload length continued, if payload len == 127  |
-// + - - - - - - - - - - - - - - - +-------------------------------+
-// |                               |Masking-key, if MASK set to 1  |
-// +-------------------------------+-------------------------------+
-// | Masking-key (continued)       |          Payload Data         |
-// +-------------------------------- - - - - - - - - - - - - - - - +
-// :                     Payload Data continued ...                :
-// + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
-// |                     Payload Data continued ...                |
-// +---------------------------------------------------------------+
+//	0                   1                   2                   3
+//	0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+//	+-+-+-+-+-------+-+-------------+-------------------------------+
+//	|F|R|R|R| opcode|M| Payload len |    Extended payload length    |
+//	|I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
+//	|N|V|V|V|       |S|             |   (if payload len==126/127)   |
+//	| |1|2|3|       |K|             |                               |
+//	+-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
+//	|     Extended payload length continued, if payload len == 127  |
+//	+ - - - - - - - - - - - - - - - +-------------------------------+
+//	|                               |Masking-key, if MASK set to 1  |
+//	+-------------------------------+-------------------------------+
+//	| Masking-key (continued)       |          Payload Data         |
+//	+-------------------------------- - - - - - - - - - - - - - - - +
+//	:                     Payload Data continued ...                :
+//	+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
+//	|                     Payload Data continued ...                |
+//	+---------------------------------------------------------------+
 //
 // An example frame header:
 //
 //	{
-//			0x81, // FIN bit set, text frame
-//			0x85, // Mask bit set, payload length 5
-//			0x37, 0xfa, 0x21, 0x3d, // Masking key
-//			0x7f, 0x9f, 0x4d, 0x51, 0x58 // Payload
+//		0x81, // FIN bit set, text frame
+//		0x85, // Mask bit set, payload length 5
+//		0x37, 0xfa, 0x21, 0x3d, // Masking key
+//		0x7f, 0x9f, 0x4d, 0x51, 0x58 // Payload
 //	}
 //
 // https://tools.ietf.org/html/rfc6455#section-5.2
