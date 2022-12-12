@@ -1,4 +1,4 @@
-// Package websockets provides a simple interface to the WebSockets protocol.
+// Package websocket provides a simple interface to the WebSockets protocol.
 // WebSockets are a way to have a persistent connection between a browser and a
 // server.
 //
@@ -22,4 +22,4 @@
 //			|<------ Frame: TextMessage, "Hello" -------|
 //			|                                           |
 //			.                                           .
-package websockets
+package websocket
