@@ -167,7 +167,7 @@ type FrameMask [4]byte
 //	|                     Payload Data continued ...                |
 //	+---------------------------------------------------------------+
 //
-// An example frame header:
+// An example websocket binary text frame:
 //
 //	{
 //		0x81, // FIN bit set, text frame
