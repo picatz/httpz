@@ -306,6 +306,21 @@ func (f Frame) String() string {
 	)
 }
 
+// WriteMessageFragment writes a message fragment to the connection.
+func (c *Conn) WriteMessageFragment(messageType MessageType, payload []byte, final bool) error {
+	// Create a frame.
+	frame := NewFrame(messageType, payload)
+
+	// Set the final bit if this is the final fragment.
+	if final {
+		frame[0] |= 0x80
+	}
+
+	// Write the frame to the connection.
+	err := c.WriteFrame(frame)
+	return err
+}
+
 // MessageType returns the message type of the frame.
 func (f Frame) MessageType() MessageType {
 	// The message type is the 4 least significant bits of the first byte.
