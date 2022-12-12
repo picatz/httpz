@@ -16,6 +16,7 @@ import (
 	"time"
 )
 
+// Conn is a WebSocket connection.
 type Conn struct {
 	// contains filtered or unexported fields
 	raw net.Conn
@@ -23,6 +24,7 @@ type Conn struct {
 	FrameWriter
 }
 
+// NewConn returns a new WebSocket connection.
 func NewConn(raw net.Conn) *Conn {
 	return &Conn{
 		raw: raw,
