@@ -1,0 +1,4 @@
+github.com/picatz/jose v0.0.0-20220220140007-20308473224c h1:SqHLfwOX216t9fXglgK78ApF2/9HO0mSxRzUARjxRSA=
+github.com/picatz/jose v0.0.0-20220220140007-20308473224c/go.mod h1:PWnK+QXNBNvhHT8EubYwSCL2GH5/KoFKvXM52L4k+5Y=
+golang.org/x/exp v0.0.0-20221212164502-fae10dda9338 h1:OvjRkcNHnf6/W5FZXSxODbxwD+X7fspczG7Jn/xQVD4=
+golang.org/x/exp v0.0.0-20221212164502-fae10dda9338/go.mod h1:CxIveKay+FTh1D0yPZemJVgC/95VzuuOLq5Qi4xnoYc=
