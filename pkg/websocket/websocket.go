@@ -59,6 +59,17 @@ func (c *Conn) Close() error {
 	return nil
 }
 
+// NewCloseFrame returns a new close frame.
+func NewCloseFrame(code int, reason string) Frame {
+	payload := make([]byte, 2+len(reason))
+
+	binary.BigEndian.PutUint16(payload, uint16(code))
+
+	copy(payload[2:], []byte(reason))
+
+	return NewFrame(CloseMessage, payload)
+}
+
 // MessageType is the type of a WebSocket message type as defined in the
 // WebSocket protocol.
 //
@@ -668,25 +679,6 @@ func WriteCloseFrame(w io.Writer, code int, reason string) error {
 	}).WriteFrame(NewCloseFrame(code, reason))
 }
 
-func NewCloseFrame(code int, reason string) Frame {
-	// Create the frame.
-	frame := make(Frame, 2+2+len(reason))
-
-	// Set the opcode.
-	frame[0] = byte(CloseFrame)
-
-	// Set the payload length.
-	frame[1] = byte(2 + len(reason))
-
-	// Set the status code.
-	binary.BigEndian.PutUint16(frame[2:], uint16(code))
-
-	// Set the reason.
-	copy(frame[4:], reason)
-
-	return frame
-}
-
 type Opcode int
 
 const (
@@ -707,47 +699,54 @@ const (
 
 	// BinaryFrame is the opcode for a binary frame.
 	BinaryFrame Opcode = 0x2
-
-	// CloseStatusNormalClosure is the close status code for a normal closure.
-	CloseStatusNormalClosure = 1000
-
-	// CloseStatusGoingAway is the close status code for a going away.
-	CloseStatusGoingAway = 1001
-
-	// CloseStatusProtocolError is the close status code for a protocol error.
-	CloseStatusProtocolError = 1002
-
-	// CloseStatusUnsupportedData is the close status code for unsupported data.
-	CloseStatusUnsupportedData = 1003
-
-	// CloseStatusNoStatusReceived is the close status code for no status received.
-	CloseStatusNoStatusReceived = 1005
-
-	// CloseStatusAbnormalClosure is the close status code for an abnormal closure.
-	CloseStatusAbnormalClosure = 1006
-
-	// CloseStatusInvalidFramePayloadData is the close status code for invalid frame payload data.
-	CloseStatusInvalidFramePayloadData = 1007
-
-	// CloseStatusPolicyViolation is the close status code for a policy violation.
-	CloseStatusPolicyViolation = 1008
-
-	// CloseStatusMessageTooBig is the close status code for a message too big.
-	CloseStatusMessageTooBig = 1009
-
-	// CloseStatusMandatoryExtension is the close status code for a mandatory extension.
-	CloseStatusMandatoryExtension = 1010
-
-	// CloseStatusInternalServerError is the close status code for an internal server error.
-	CloseStatusInternalServerError = 1011
-
-	// CloseStatusTLSHandshake is the close status code for a TLS handshake.
-	CloseStatusTLSHandshake = 1015
-
-	// CloseStatusNoClose is the close status code for no close.
-	CloseStatusNoClose = -1
 )
 
+// CloseStatus is the status code for a close frame.
+type CloseStatus int
+
+const (
+
+	// CloseStatusNormalClosure is the close status code for a normal closure.
+	CloseStatusNormalClosure CloseStatus = 1000
+
+	// CloseStatusGoingAway is the close status code for a going away.
+	CloseStatusGoingAway CloseStatus = 1001
+
+	// CloseStatusProtocolError is the close status code for a protocol error.
+	CloseStatusProtocolError CloseStatus = 1002
+
+	// CloseStatusUnsupportedData is the close status code for unsupported data.
+	CloseStatusUnsupportedData CloseStatus = 1003
+
+	// CloseStatusNoStatusReceived is the close status code for no status received.
+	CloseStatusNoStatusReceived CloseStatus = 1005
+
+	// CloseStatusAbnormalClosure is the close status code for an abnormal closure.
+	CloseStatusAbnormalClosure CloseStatus = 1006
+
+	// CloseStatusInvalidFramePayloadData is the close status code for invalid frame payload data.
+	CloseStatusInvalidFramePayloadData CloseStatus = 1007
+
+	// CloseStatusPolicyViolation is the close status code for a policy violation.
+	CloseStatusPolicyViolation CloseStatus = 1008
+
+	// CloseStatusMessageTooBig is the close status code for a message too big.
+	CloseStatusMessageTooBig CloseStatus = 1009
+
+	// CloseStatusMandatoryExtension is the close status code for a mandatory extension.
+	CloseStatusMandatoryExtension CloseStatus = 1010
+
+	// CloseStatusInternalServerError is the close status code for an internal server error.
+	CloseStatusInternalServerError CloseStatus = 1011
+
+	// CloseStatusTLSHandshake is the close status code for a TLS handshake.
+	CloseStatusTLSHandshake CloseStatus = 1015
+
+	// CloseStatusNoClose is the close status code for no close.
+	CloseStatusNoClose CloseStatus = -1
+)
+
+// WriteFrame writes a frame to a writer.
 func WriteFrame(w io.Writer, f Frame) error {
 	return (&FrameWriter{
 		Writer: w,
@@ -801,15 +800,8 @@ func Upgrade(w http.ResponseWriter, r *http.Request, additionalHeaders http.Head
 	// Set the connection header.
 	response.Header.Set("Connection", "Upgrade")
 
-	// https://tools.ietf.org/html/rfc6455#section-1.3
-	acceptKey := func(key string) string {
-		h := sha1.New()
-		io.WriteString(h, key)
-		io.WriteString(h, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-		return base64.StdEncoding.EncodeToString(h.Sum(nil))
-	}
-
 	// Set the WebSocket accept header.
+	// https://tools.ietf.org/html/rfc6455#section-1.3
 	response.Header.Set("Sec-WebSocket-Accept", acceptKey(key))
 
 	// Set the WebSocket protocol header.
@@ -817,6 +809,9 @@ func Upgrade(w http.ResponseWriter, r *http.Request, additionalHeaders http.Head
 	if protocol != "" {
 		response.Header.Set("Sec-WebSocket-Protocol", protocol)
 	}
+
+	// Set the version header.
+	response.Header.Set("Sec-WebSocket-Version", version)
 
 	// Set the response status.
 	response.Status = fmt.Sprintf("%d %s", response.StatusCode, http.StatusText(response.StatusCode))
@@ -841,11 +836,32 @@ func Upgrade(w http.ResponseWriter, r *http.Request, additionalHeaders http.Head
 	return NewConn(conn), nil
 }
 
+func generateKey() (string, error) {
+	key := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(key), nil
+}
+
+func acceptKey(key string) string {
+	h := sha1.New()
+	io.WriteString(h, key)
+	io.WriteString(h, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+}
+
 func Dial(ctx context.Context, addr string) (*Conn, *http.Response, error) {
 	d := net.Dialer{}
 
 	// Dial the connection.
 	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// generate challenge key
+	key, err := generateKey()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -856,8 +872,8 @@ func Dial(ctx context.Context, addr string) (*Conn, *http.Response, error) {
 		"Host: " + addr,
 		"Upgrade: websocket",
 		"Connection: Upgrade",
-		"Sec-WebSocket-Key: " + base64.StdEncoding.EncodeToString([]byte("hello")),
 		"Sec-WebSocket-Version: 13",
+		"Sec-WebSocket-Key: " + key,
 		"",
 		"",
 	}
@@ -887,15 +903,19 @@ func Dial(ctx context.Context, addr string) (*Conn, *http.Response, error) {
 	}
 
 	// Validate the WebSocket version.
-	// version := resp.Header.Get("Sec-WebSocket-Version")
-	// if version != "13" {
-	// 	return nil, resp, fmt.Errorf("websocket: unsupported version for upgrade response: %s", version)
-	// }
+	version := resp.Header.Get("Sec-WebSocket-Version")
+	if version != "13" {
+		return nil, resp, fmt.Errorf("websocket: unsupported version for upgrade response: %s", version)
+	}
 
 	// Validate the WebSocket key.
 	accept := resp.Header.Get("Sec-WebSocket-Accept")
 	if accept == "" {
 		return nil, resp, fmt.Errorf("websocket: accept is empty")
+	}
+
+	if accept != acceptKey(string(key)) {
+		return nil, resp, fmt.Errorf("websocket: accept is invalid")
 	}
 
 	// Return the WebSocket connection.
