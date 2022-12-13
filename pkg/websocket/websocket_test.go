@@ -148,7 +148,7 @@ func TestWriteFrame(t *testing.T) {
 }
 
 // HTTP test server.
-func Testwebsocket(t *testing.T) {
+func TestWebsocket(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Upgrade(w, r, nil)
 		if err != nil {
