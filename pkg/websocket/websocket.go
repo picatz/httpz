@@ -17,17 +17,20 @@ import (
 	"time"
 )
 
-// Conn is a WebSocket connection.
+// Conn is a WebSocket connection, and implements the net.Conn interface.
+//
+// It is safe for concurrent use by multiple goroutines.
 type Conn struct {
-	// contains filtered or unexported fields
-	raw net.Conn
 	FrameReader
 	FrameWriter
 
+	// contains filtered or unexported fields
+	raw   net.Conn
 	close sync.Once
 }
 
-// NewConn returns a new WebSocket connection.
+// NewConn returns a new WebSocket connection, using the provided net.Conn
+// for I/O operations.
 func NewConn(raw net.Conn) *Conn {
 	return &Conn{
 		raw: raw,
