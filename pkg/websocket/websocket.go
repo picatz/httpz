@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,8 @@ type Conn struct {
 	raw net.Conn
 	FrameReader
 	FrameWriter
+
+	close sync.Once
 }
 
 // NewConn returns a new WebSocket connection.
@@ -38,7 +41,22 @@ func NewConn(raw net.Conn) *Conn {
 }
 
 func (c *Conn) Close() error {
-	return c.raw.Close()
+	defer c.raw.Close()
+
+	var err error
+	c.close.Do(func() {
+		err = c.WriteFrame(NewFrame(CloseMessage, []byte{}))
+
+		// flush the write buffer if possible
+		if f, ok := c.raw.(*net.TCPConn); ok {
+			f.SetLinger(0)
+		}
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // MessageType is the type of a WebSocket message type as defined in the
@@ -139,6 +157,16 @@ func (c *Conn) ReadMessage() (MessageType, []byte, error) {
 //
 // https://tools.ietf.org/html/rfc6455#section-5.2
 type Frame []byte
+
+func (f Frame) Read(p []byte) (int, error) {
+	// If the frame is empty, return EOF.
+	if len(f) == 0 {
+		return 0, io.EOF
+	}
+	// Copy the frame to the buffer.
+	n := copy(p, f)
+	return n, nil
+}
 
 // FrameMask is the mask key for a masked frame.
 //
@@ -609,6 +637,116 @@ func (w *FrameWriter) WriteFrame(f Frame) error {
 	_, err := w.Writer.Write(f)
 	return err
 }
+
+func WriteControlFrame(w io.Writer, opcode int, payload []byte) error {
+	return (&FrameWriter{
+		Writer: w,
+		Masked: true,
+	}).WriteFrame(NewControlFrame(opcode, payload))
+}
+
+func NewControlFrame(opcode int, payload []byte) Frame {
+	// Create the frame.
+	frame := make(Frame, 2+len(payload))
+
+	// Set the opcode.
+	frame[0] = byte(opcode)
+
+	// Set the payload length.
+	frame[1] = byte(len(payload))
+
+	// Set the payload.
+	copy(frame[2:], payload)
+
+	return frame
+}
+
+func WriteCloseFrame(w io.Writer, code int, reason string) error {
+	return (&FrameWriter{
+		Writer: w,
+		Masked: true,
+	}).WriteFrame(NewCloseFrame(code, reason))
+}
+
+func NewCloseFrame(code int, reason string) Frame {
+	// Create the frame.
+	frame := make(Frame, 2+2+len(reason))
+
+	// Set the opcode.
+	frame[0] = byte(CloseFrame)
+
+	// Set the payload length.
+	frame[1] = byte(2 + len(reason))
+
+	// Set the status code.
+	binary.BigEndian.PutUint16(frame[2:], uint16(code))
+
+	// Set the reason.
+	copy(frame[4:], reason)
+
+	return frame
+}
+
+type Opcode int
+
+const (
+	// CloseFrame is the opcode for a close frame.
+	CloseFrame Opcode = 0x8
+
+	// PingFrame is the opcode for a ping frame.
+	PingFrame Opcode = 0x9
+
+	// PongFrame is the opcode for a pong frame.
+	PongFrame Opcode = 0xA
+
+	// ContinuationFrame is the opcode for a continuation frame.
+	ContinuationFrame Opcode = 0x0
+
+	// TextFrame is the opcode for a text frame.
+	TextFrame Opcode = 0x1
+
+	// BinaryFrame is the opcode for a binary frame.
+	BinaryFrame Opcode = 0x2
+
+	// CloseStatusNormalClosure is the close status code for a normal closure.
+	CloseStatusNormalClosure = 1000
+
+	// CloseStatusGoingAway is the close status code for a going away.
+	CloseStatusGoingAway = 1001
+
+	// CloseStatusProtocolError is the close status code for a protocol error.
+	CloseStatusProtocolError = 1002
+
+	// CloseStatusUnsupportedData is the close status code for unsupported data.
+	CloseStatusUnsupportedData = 1003
+
+	// CloseStatusNoStatusReceived is the close status code for no status received.
+	CloseStatusNoStatusReceived = 1005
+
+	// CloseStatusAbnormalClosure is the close status code for an abnormal closure.
+	CloseStatusAbnormalClosure = 1006
+
+	// CloseStatusInvalidFramePayloadData is the close status code for invalid frame payload data.
+	CloseStatusInvalidFramePayloadData = 1007
+
+	// CloseStatusPolicyViolation is the close status code for a policy violation.
+	CloseStatusPolicyViolation = 1008
+
+	// CloseStatusMessageTooBig is the close status code for a message too big.
+	CloseStatusMessageTooBig = 1009
+
+	// CloseStatusMandatoryExtension is the close status code for a mandatory extension.
+	CloseStatusMandatoryExtension = 1010
+
+	// CloseStatusInternalServerError is the close status code for an internal server error.
+	CloseStatusInternalServerError = 1011
+
+	// CloseStatusTLSHandshake is the close status code for a TLS handshake.
+	CloseStatusTLSHandshake = 1015
+
+	// CloseStatusNoClose is the close status code for no close.
+	CloseStatusNoClose = -1
+)
 
 func WriteFrame(w io.Writer, f Frame) error {
 	return (&FrameWriter{
