@@ -13,17 +13,16 @@ import (
 
 // TestHandler tests the Handler type.
 func TestHandler(t *testing.T) {
-	// Create a new limiter that allows a single request per second.
-	limiter := rate.NewLimiter(rate.Every(1*time.Second), 1)
+	t.Run("1/second", func(t *testing.T) {
+		// Create a new limiter that allows a single request per second.
+		limiter := rate.NewLimiter(rate.Every(1*time.Second), 1)
 
-	// Create a new handler with the limiter.
-	handler := ratelimit.Handler{
-		Limiter:       limiter,
-		SetRetryAfter: true,
-	}
+		// Create a new handler with the limiter.
+		handler := ratelimit.Handler{
+			Limiter:       limiter,
+			SetRetryAfter: true,
+		}
 
-	// Ensure the handler allows a single request per second.
-	{
 		// Create a new request.
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 
@@ -87,5 +86,40 @@ func TestHandler(t *testing.T) {
 		if rec.Code != http.StatusTooManyRequests {
 			t.Fatalf("expected status code %d, got %d", http.StatusTooManyRequests, rec.Code)
 		}
-	}
+	})
+
+	t.Run("no limit", func(t *testing.T) {
+		// Create a new handler without a limiter.
+		handler := ratelimit.Handler{
+			Limiter: nil,
+		}
+
+		// Create a new request.
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+		// Create a new response recorder.
+		rec := httptest.NewRecorder()
+
+		// Serve the request.
+		handler.ServeHTTP(rec, req)
+
+		// Check the response status code.
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status code %d, got %d", http.StatusOK, rec.Code)
+		}
+
+		// Create a new request.
+		req = httptest.NewRequest(http.MethodGet, "/", nil)
+
+		// Create a new response recorder.
+		rec = httptest.NewRecorder()
+
+		// Serve the request.
+		handler.ServeHTTP(rec, req)
+
+		// Check the response status code.
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status code %d, got %d", http.StatusOK, rec.Code)
+		}
+	})
 }

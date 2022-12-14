@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -17,10 +18,8 @@ type Handler struct {
 	// responses. If false, the header is not set.
 	SetRetryAfter bool
 
-	// DropOnLimit drops requests on rate limit instead of returning
-	// a 429 status code. If true, the request is dropped and the
-	// OnLimit handler is not called.
-	DropOnLimit bool
+	// SetXLimit sets the X-RateLimit-* headers on rate limited
+	SetXLimit bool
 
 	// OnLimit is called when a request is rate limited.
 	// If nil, http.StatusTooManyRequests (429) is returned.
@@ -50,6 +49,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Set the Retry-After header based on the limiter's
 			// rate and burst. Round the duration to the nearest
 			// second.
+			//
+			// https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
 			w.Header().Set("Retry-After", h.Limiter.Reserve().Delay().Round(time.Second).String())
 		}
 
@@ -65,10 +66,17 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: consider adding other X-RateLimit-* headers to the response, maybe
-	// based on the limiter's rate and burst.
+	// Optional common rate limit headers.
 	//
-	// See https://tools.ietf.org/html/rfc6585#section-4
+	// https://developer.okta.com/docs/reference/rl-best-practices/#check-your-rate-limits-with-okta-s-rate-limit-headers
+	if h.SetXLimit {
+		// The rate limit ceiling that is applicable for the current request.
+		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", int(h.Limiter.Limit())))
+		// The number of requests left for the current rate-limit window.
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", int(h.Limiter.Burst())-int(h.Limiter.Limit())))
+		// The time at which the rate limit resets, specified in UTC epoch time (in seconds).
+		w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", time.Now().Add(h.Limiter.Reserve().Delay()).Unix()))
+	}
 
 	// Check if the Next handler is set.
 	if h.Next != nil {
