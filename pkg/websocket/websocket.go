@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,78 +44,40 @@ func NewConn(raw net.Conn) *Conn {
 	}
 }
 
+// Close sends a close frame message and closes the underlying connection.
 func (c *Conn) Close() error {
 	defer c.raw.Close()
 
 	var err error
+
 	c.close.Do(func() {
-		err = c.WriteFrame(NewFrame(CloseMessage, []byte{}))
+		err = c.WriteFrame(NewFrame(CloseFrame, []byte{}))
 
 		// flush the write buffer if possible
 		if f, ok := c.raw.(*net.TCPConn); ok {
 			f.SetLinger(0)
 		}
 	})
-	if err != nil {
-		return err
-	}
 
-	return nil
+	return err
 }
 
 // NewCloseFrame returns a new close frame.
-func NewCloseFrame(code int, reason string) Frame {
+//
+// A close frame is a control frame with a payload consisting of a 2-byte
+// unsigned integer (in network byte order) followed by a UTF-8-encoded
+// "reason".
+//
+// https://www.rfc-editor.org/rfc/rfc6455#section-5.5.1
+func NewCloseFrame(code StatusCode, reason string) Frame {
+	// https://tools.ietf.org/html/rfc6455#section-5.5.1
 	payload := make([]byte, 2+len(reason))
 
 	binary.BigEndian.PutUint16(payload, uint16(code))
 
 	copy(payload[2:], []byte(reason))
 
-	return NewFrame(CloseMessage, payload)
-}
-
-// MessageType is the type of a WebSocket message type as defined in the
-// WebSocket protocol.
-//
-// https://tools.ietf.org/html/rfc6455#section-5.6
-type MessageType int
-
-// Message types as defined in the WebSocket protocol.
-//
-// https://tools.ietf.org/html/rfc6455#section-5.6
-const (
-	// TextMessage is a text message.
-	TextMessage MessageType = 1 + iota
-	// BinaryMessage is a binary message.
-	BinaryMessage
-	// CloseMessage is a close control message.
-	CloseMessage
-	// PingMessage is a ping control message.
-	PingMessage
-	// PongMessage is a pong control message.
-	PongMessage
-	// ContinuationMessage is a continuation message.
-	ContinuationMessage
-	// ControlMessage is a control message.
-	ControlMessage
-	// DataMessage is a data message.
-	DataMessage
-	// UnknownMessage is an unknown message.
-	UnknownMessage
-	// ReservedMessage is a reserved message.
-	ReservedMessage
-)
-
-// String returns the string representation of the message type.
-func (m MessageType) String() string {
-	switch m {
-	case TextMessage:
-		return "TextMessage"
-	case BinaryMessage:
-		return "BinaryMessage"
-	default:
-		return fmt.Sprintf("MessageType(%d)", m)
-	}
+	return NewFrame(CloseFrame, payload)
 }
 
 // WriteMessage writes a message with the given message type and payload
@@ -123,8 +86,8 @@ func (m MessageType) String() string {
 // in the WebSocket protocol.
 //
 // The payload is not masked.
-func (c *Conn) WriteMessage(messageType int, data []byte) error {
-	frame := NewFrame(MessageType(messageType), data)
+func (c *Conn) WriteMessage(opcode Opcode, data []byte) error {
+	frame := NewFrame(opcode, data)
 	n, err := c.raw.Write(frame)
 	if err != nil {
 		return err
@@ -156,30 +119,60 @@ func (c *Conn) SetDeadline(t time.Time) error {
 // in the WebSocket protocol.
 //
 // The payload is unmasked.
-func (c *Conn) ReadMessage() (MessageType, []byte, error) {
+func (c *Conn) ReadMessage() (Opcode, []byte, error) {
 	frame, err := c.ReadFrame()
 	if err != nil {
 		return 0, nil, err
 	}
-	return frame.MessageType(), frame.Payload(), nil
+
+	payload := frame.Payload()
+	if frame.Masked() {
+		_, err := frame.Unmask()
+		if err != nil {
+			return 0, nil, err
+		}
+	}
+
+	return frame.Opcode(), payload, nil
 }
 
-// Frame is a single WebSocket frame. It is a slice of bytes that contains
-// the frame header and payload. The frame header is always two bytes long.
-// The first byte contains the frame type and flags. The second byte contains
-// the payload length. The payload follows the header.
+// Frame is a single "WebSocket frame", a slice of bytes that contains
+// a "header" and "payload".
+//
+// The header is always two bytes long. The first byte contains the frame
+// type and flags. The second byte contains the payload length. The payload
+// follows the heeader.
+//
+// The frame can be of type "data" or "control". The type is defined
+// by the first four bits of the first byte. The frame type can be either
+// 0x1 for a text frame, 0x2 for a binary frame, 0x8 for a close frame,
+// 0x9 for a ping frame, 0xA for a pong frame, or 0x0 for a continuation
+// frame.
+//
+// The payload length can be 0-125, in which case the payload length is
+// the value of the second byte. If the payload length is 126, the next
+// two bytes contain the payload length. If the payload length is 127,
+// the next eight bytes contain the payload length.
 //
 // https://tools.ietf.org/html/rfc6455#section-5.2
 type Frame []byte
 
-func (f Frame) Read(p []byte) (int, error) {
-	// If the frame is empty, return EOF.
+// Type returns the type of the frame, or -1 if the frame is too short
+// to contain a type.
+func (f Frame) Type() Opcode {
 	if len(f) == 0 {
-		return 0, io.EOF
+		return -1
 	}
-	// Copy the frame to the buffer.
-	n := copy(p, f)
-	return n, nil
+	return Opcode(f[0] & 0xF)
+}
+
+// Header returns the header of the frame, or nil if the frame is too
+// short to contain a header.
+func (f Frame) Header() []byte {
+	if len(f) < 2 {
+		return nil
+	}
+	return f[:2]
 }
 
 // FrameMask is the mask key for a masked frame.
@@ -219,7 +212,7 @@ type FrameMask [4]byte
 //	}
 //
 // https://tools.ietf.org/html/rfc6455#section-5.2
-func NewFrame(messageType MessageType, payload []byte) Frame {
+func NewFrame(Opcode Opcode, payload []byte) Frame {
 	// The frame header is always two bytes long, plus the masking key
 	// (4 bytes) and the payload.
 	frame := make(Frame, 2+4+len(payload))
@@ -230,7 +223,7 @@ func NewFrame(messageType MessageType, payload []byte) Frame {
 	// The frame type must be either 1 (text) or 2 (binary).
 	// The flags must be 0.
 	// The frame type and flags are combined into the first byte.
-	frame[0] = byte(messageType)
+	frame[0] = byte(Opcode)
 
 	// Set the FIN bit, which is the 8th bit of the first byte of the frame
 	// header.
@@ -341,7 +334,7 @@ func (f Frame) String() string {
 
 	return fmt.Sprintf(
 		"websocket.Frame{Type: %v, Size: %d, Mask:%s, Payload: %s}",
-		f.MessageType(),
+		f.Opcode(),
 		len(payload),
 		hex.EncodeToString(f.MaskKey()),
 		hex.EncodeToString(payload),
@@ -349,9 +342,9 @@ func (f Frame) String() string {
 }
 
 // WriteMessageFragment writes a message fragment to the connection.
-func (c *Conn) WriteMessageFragment(messageType MessageType, payload []byte, final bool) error {
+func (c *Conn) WriteMessageFragment(Opcode Opcode, payload []byte, final bool) error {
 	// Create a frame.
-	frame := NewFrame(messageType, payload)
+	frame := NewFrame(Opcode, payload)
 
 	// Set the final bit if this is the final fragment.
 	if final {
@@ -363,10 +356,10 @@ func (c *Conn) WriteMessageFragment(messageType MessageType, payload []byte, fin
 	return err
 }
 
-// MessageType returns the message type of the frame.
-func (f Frame) MessageType() MessageType {
+// Opcode returns the message type of the frame.
+func (f Frame) Opcode() Opcode {
 	// The message type is the 4 least significant bits of the first byte.
-	return MessageType(f[0] & 0x0f)
+	return Opcode(f[0] & 0x0f)
 }
 
 // Payload returns the payload of the frame.
@@ -375,37 +368,15 @@ func (f Frame) Payload() []byte {
 		return nil
 	}
 
-	// The payload length is the 7 least significant bits of the second byte.
-	payloadLength := int(f[1] & 0x7f)
-
-	// Verify the payload length is not greater than the frame length.
-	if payloadLength > len(f) {
+	if f.PayloadSize() == 0 {
 		return nil
 	}
 
-	// If the payload length is 126, then the next two bytes contain the
-	// payload length.
-	if payloadLength == 126 {
-		payloadLength = int(binary.BigEndian.Uint16(f[2:4]))
-	}
-
-	// If the payload length is 127, then the next eight bytes contain the
-	// payload length.
-	if payloadLength == 127 {
-		payloadLength = int(binary.BigEndian.Uint64(f[2:10]))
-	}
-
-	// Verify the payload length is not greater than the frame length.
-	if payloadLength > len(f) {
-		return nil
-	}
-
-	// The payload starts after the frame header (2 bytes) and the mask key (4 bytes).
-	//
 	// Return the payload only, the last 6 bytes of the frame.
 	return f[6:]
 }
 
+// PayloadSize returns the size of the payload in bytes.
 func (f Frame) PayloadSize() int {
 	if f == nil || len(f) < 2 {
 		return 0
@@ -638,6 +609,7 @@ type FrameWriter struct {
 	Masked bool
 }
 
+// WriteFrame writes a WebSocket frame to the underlying writer.
 func (w *FrameWriter) WriteFrame(f Frame) error {
 	// If the frame is masked, then unmask it.
 	if !f.Masked() && w.Masked {
@@ -652,36 +624,9 @@ func (w *FrameWriter) WriteFrame(f Frame) error {
 	return err
 }
 
-func WriteControlFrame(w io.Writer, opcode int, payload []byte) error {
-	return (&FrameWriter{
-		Writer: w,
-		Masked: true,
-	}).WriteFrame(NewControlFrame(opcode, payload))
-}
-
-func NewControlFrame(opcode int, payload []byte) Frame {
-	// Create the frame.
-	frame := make(Frame, 2+len(payload))
-
-	// Set the opcode.
-	frame[0] = byte(opcode)
-
-	// Set the payload length.
-	frame[1] = byte(len(payload))
-
-	// Set the payload.
-	copy(frame[2:], payload)
-
-	return frame
-}
-
-func WriteCloseFrame(w io.Writer, code int, reason string) error {
-	return (&FrameWriter{
-		Writer: w,
-		Masked: true,
-	}).WriteFrame(NewCloseFrame(code, reason))
-}
-
+// Opcode denotes the "message type" of a WebSocket frame.
+//
+// https://www.rfc-editor.org/rfc/rfc6455#section-11.8
 type Opcode int
 
 const (
@@ -704,50 +649,25 @@ const (
 	BinaryFrame Opcode = 0x2
 )
 
-// CloseStatus is the status code for a close frame.
-type CloseStatus int
-
-const (
-
-	// CloseStatusNormalClosure is the close status code for a normal closure.
-	CloseStatusNormalClosure CloseStatus = 1000
-
-	// CloseStatusGoingAway is the close status code for a going away.
-	CloseStatusGoingAway CloseStatus = 1001
-
-	// CloseStatusProtocolError is the close status code for a protocol error.
-	CloseStatusProtocolError CloseStatus = 1002
-
-	// CloseStatusUnsupportedData is the close status code for unsupported data.
-	CloseStatusUnsupportedData CloseStatus = 1003
-
-	// CloseStatusNoStatusReceived is the close status code for no status received.
-	CloseStatusNoStatusReceived CloseStatus = 1005
-
-	// CloseStatusAbnormalClosure is the close status code for an abnormal closure.
-	CloseStatusAbnormalClosure CloseStatus = 1006
-
-	// CloseStatusInvalidFramePayloadData is the close status code for invalid frame payload data.
-	CloseStatusInvalidFramePayloadData CloseStatus = 1007
-
-	// CloseStatusPolicyViolation is the close status code for a policy violation.
-	CloseStatusPolicyViolation CloseStatus = 1008
-
-	// CloseStatusMessageTooBig is the close status code for a message too big.
-	CloseStatusMessageTooBig CloseStatus = 1009
-
-	// CloseStatusMandatoryExtension is the close status code for a mandatory extension.
-	CloseStatusMandatoryExtension CloseStatus = 1010
-
-	// CloseStatusInternalServerError is the close status code for an internal server error.
-	CloseStatusInternalServerError CloseStatus = 1011
-
-	// CloseStatusTLSHandshake is the close status code for a TLS handshake.
-	CloseStatusTLSHandshake CloseStatus = 1015
-
-	// CloseStatusNoClose is the close status code for no close.
-	CloseStatusNoClose CloseStatus = -1
-)
+// String returns the string representation of the opcode.
+func (o Opcode) String() string {
+	switch o {
+	case ContinuationFrame:
+		return "ContinuationMessage"
+	case TextFrame:
+		return "TextMessage"
+	case BinaryFrame:
+		return "BinaryMessage"
+	case CloseFrame:
+		return "CloseMessage"
+	case PingFrame:
+		return "PingMessage"
+	case PongFrame:
+		return "PongMessage"
+	default:
+		return "Unknown(0x" + strconv.FormatInt(int64(o), 16) + ")"
+	}
+}
 
 // WriteFrame writes a frame to a writer.
 func WriteFrame(w io.Writer, f Frame) error {
@@ -839,6 +759,7 @@ func Upgrade(w http.ResponseWriter, r *http.Request, additionalHeaders http.Head
 	return NewConn(conn), nil
 }
 
+// generateKey generates a random key used for the WebSocket handshake.
 func generateKey() (string, error) {
 	key := make([]byte, 16)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
@@ -847,6 +768,7 @@ func generateKey() (string, error) {
 	return base64.StdEncoding.EncodeToString(key), nil
 }
 
+// acceptKey generates the accept key used for the WebSocket handshake.
 func acceptKey(key string) string {
 	h := sha1.New()
 	io.WriteString(h, key)
@@ -854,6 +776,8 @@ func acceptKey(key string) string {
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
+// Dial dials a WebSocket connection and returns the connection and the
+// related HTTP response.
 func Dial(ctx context.Context, addr string) (*Conn, *http.Response, error) {
 	d := net.Dialer{}
 
@@ -924,3 +848,65 @@ func Dial(ctx context.Context, addr string) (*Conn, *http.Response, error) {
 	// Return the WebSocket connection.
 	return NewConn(conn), resp, nil
 }
+
+// StatusCode represents a WebSocket status code.
+//
+// https://tools.ietf.org/html/rfc6455#section-7.4
+type StatusCode int
+
+const (
+	// StatusNormalClosure indicates a normal closure, meaning that the purpose
+	// for which the connection was established has been fulfilled.
+	StatusNormalClosure StatusCode = 1000
+
+	// StatusGoingAway indicates that an endpoint is "going away", such as a server
+	// going down or a browser having navigated away from a page.
+	StatusGoingAway StatusCode = 1001
+
+	// StatusProtocolError indicates that an endpoint is terminating the connection
+	// due to a protocol error.
+	StatusProtocolError StatusCode = 1002
+
+	// StatusUnsupportedData indicates that an endpoint is terminating the connection
+	// because it has received a type of data it cannot accept (e.g., an endpoint
+	// that understands only text data MAY send this if it receives a binary message).
+	StatusUnsupportedData StatusCode = 1003
+
+	// StatusNoStatusRcvd indicates that no status code was provided even though one
+	// was expected.
+	StatusNoStatusRcvd StatusCode = 1005
+
+	// StatusAbnormalClosure indicates that an endpoint is terminating the connection
+	// because it has received a message that is too big for it to process.
+	StatusAbnormalClosure StatusCode = 1006
+
+	// StatusInvalidFramePayloadData indicates that an endpoint is terminating the
+	// connection because it has received data within a message that was not consistent
+	// with the type of the message (e.g., non-UTF-8 [RFC3629] data within a text message).
+	StatusInvalidFramePayloadData StatusCode = 1007
+
+	// StatusPolicyViolation indicates that an endpoint is terminating the connection
+	// because it has received a message that violates its policy.
+	StatusPolicyViolation StatusCode = 1008
+
+	// StatusMessageTooBig indicates that an endpoint is terminating the connection
+	// because it has received a message that is too big for it to process.
+	StatusMessageTooBig StatusCode = 1009
+
+	// StatusMandatoryExt indicates that an endpoint (client) is terminating the
+	// connection because it has expected the server to negotiate one or more extension,
+	// but the server didn't return them in the response message of the WebSocket handshake.
+	// The list of extensions that are needed SHOULD appear in the /reason/ part of the
+	// Close frame. Note that this status code is not used by the server, because it can
+	// fail the WebSocket handshake instead.
+	StatusMandatoryExt StatusCode = 1010
+
+	// StatusInternalServerErr indicates that a server is terminating the connection
+	// because it encountered an unexpected condition that prevented it from fulfilling
+	// the request.
+	StatusInternalServerErr StatusCode = 1011
+
+	// StatusTLSHandshake indicates that the connection was closed due to a failure
+	// to perform a TLS handshake (e.g., the server certificate can't be verified).
+	StatusTLSHandshake StatusCode = 1015
+)

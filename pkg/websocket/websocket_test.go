@@ -13,10 +13,10 @@ import (
 
 func TestWebsocketFrameMask(t *testing.T) {
 	t.Run("simple", func(t *testing.T) {
-		frame := websocket.NewFrame(websocket.TextMessage, []byte("Hello"))
+		frame := websocket.NewFrame(websocket.TextFrame, []byte("Hello"))
 
-		if frame.MessageType() != websocket.TextMessage {
-			t.Fatalf("expected message type to be %d, got %d", websocket.TextMessage, frame.MessageType())
+		if frame.Type() != websocket.TextFrame {
+			t.Fatalf("expected message type to be %d, got %d", websocket.TextFrame, frame.Type())
 		}
 
 		if !frame.Masked() {
@@ -32,8 +32,8 @@ func TestWebsocketFrameMask(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if frame.MessageType() != websocket.TextMessage {
-			t.Fatalf("expected message type to be %d, got %d", websocket.TextMessage, frame.MessageType())
+		if frame.Type() != websocket.TextFrame {
+			t.Fatalf("expected message type to be %d, got %d", websocket.TextFrame, frame.Type())
 		}
 
 		if !bytes.Equal(payload, []byte("Hello")) {
@@ -50,8 +50,8 @@ func TestWebsocketFrameMask(t *testing.T) {
 // included in the `testdata` directory.
 func FuzzNewFrame(f *testing.F) {
 	// Setup a random frame.
-	f.Add(websocket.NewFrame(websocket.TextMessage, []byte("Hello")).Bytes())
-	f.Add(websocket.NewFrame(websocket.BinaryMessage, []byte("Hello")).Bytes())
+	f.Add(websocket.NewFrame(websocket.TextFrame, []byte("Hello")).Bytes())
+	f.Add(websocket.NewFrame(websocket.BinaryFrame, []byte("Hello")).Bytes())
 
 	f.Fuzz(func(t *testing.T, frameBytes []byte) {
 		frame := websocket.Frame(frameBytes)
@@ -88,7 +88,7 @@ func FuzzNewFrame(f *testing.F) {
 
 func TestReadFrame(t *testing.T) {
 	t.Run("simple", func(t *testing.T) {
-		frame := websocket.NewFrame(websocket.TextMessage, []byte("Hello"))
+		frame := websocket.NewFrame(websocket.TextFrame, []byte("Hello"))
 
 		reader := bytes.NewReader(frame.Bytes())
 
@@ -97,8 +97,8 @@ func TestReadFrame(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if frame.MessageType() != websocket.TextMessage {
-			t.Fatalf("expected message type to be %d, got %d", websocket.TextMessage, frame.MessageType())
+		if frame.Type() != websocket.TextFrame {
+			t.Fatalf("expected message type to be %d, got %d", websocket.TextFrame, frame.Type())
 		}
 
 		if frame.Masked() {
@@ -115,7 +115,7 @@ func TestReadFrame(t *testing.T) {
 
 func TestWriteFrame(t *testing.T) {
 	t.Run("simple", func(t *testing.T) {
-		frame := websocket.NewFrame(websocket.TextMessage, []byte("Hello"))
+		frame := websocket.NewFrame(websocket.TextFrame, []byte("Hello"))
 
 		writer := bytes.NewBuffer(nil)
 
@@ -131,8 +131,8 @@ func TestWriteFrame(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if frame.MessageType() != websocket.TextMessage {
-			t.Fatalf("expected message type to be %d, got %d", websocket.TextMessage, frame.MessageType())
+		if frame.Type() != websocket.TextFrame {
+			t.Fatalf("expected message type to be %d, got %d", websocket.TextFrame, frame.Type())
 		}
 
 		if frame.Masked() {
@@ -165,15 +165,15 @@ func TestWebsocket(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if frame.MessageType() == websocket.CloseMessage {
+		if frame.Type() == websocket.CloseFrame {
 			return
 		}
 
-		if frame.MessageType() == websocket.TextMessage {
+		if frame.Type() == websocket.TextFrame {
 			t.Logf("received text message: %s", frame.Payload())
 		}
 
-		if frame.MessageType() == websocket.BinaryMessage {
+		if frame.Type() == websocket.BinaryFrame {
 			t.Logf("received binary message: %s", frame.Payload())
 		}
 
@@ -181,7 +181,7 @@ func TestWebsocket(t *testing.T) {
 			t.Fatalf("expected payload to be %q, got %q", "Hello from client", frame.Payload())
 		}
 
-		err = conn.WriteFrame(websocket.NewFrame(websocket.TextMessage, []byte("Hello from server")))
+		err = conn.WriteFrame(websocket.NewFrame(websocket.TextFrame, []byte("Hello from server")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -196,7 +196,7 @@ func TestWebsocket(t *testing.T) {
 		}
 		defer conn.Close()
 
-		err = conn.WriteFrame(websocket.NewFrame(websocket.TextMessage, []byte("Hello from client")))
+		err = conn.WriteFrame(websocket.NewFrame(websocket.TextFrame, []byte("Hello from client")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -209,8 +209,8 @@ func TestWebsocket(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if frame.MessageType() != websocket.TextMessage {
-			t.Fatalf("expected message type to be %d, got %d", websocket.TextMessage, frame.MessageType())
+		if frame.Type() != websocket.TextFrame {
+			t.Fatalf("expected message type to be %d, got %d", websocket.TextFrame, frame.Type())
 		}
 
 		if !bytes.Equal(frame.Payload(), []byte("Hello from server")) {
