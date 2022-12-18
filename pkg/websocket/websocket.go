@@ -39,6 +39,7 @@ func NewConn(raw net.Conn) *Conn {
 			Reader: raw,
 		},
 		FrameWriter: FrameWriter{
+			Masked: false,
 			Writer: raw,
 		},
 	}
@@ -215,7 +216,8 @@ type FrameMask [4]byte
 func NewFrame(Opcode Opcode, payload []byte) Frame {
 	// The frame header is always two bytes long, plus the masking key
 	// (4 bytes) and the payload.
-	frame := make(Frame, 2+4+len(payload))
+	// frame := make(Frame, 2+4+len(payload))
+	frame := make(Frame, 2+len(payload))
 
 	// The first byte contains the frame type and flags.
 	// The frame type is the 4 least significant bits of the first byte.
@@ -249,30 +251,32 @@ func NewFrame(Opcode Opcode, payload []byte) Frame {
 
 	// Set the mask bit, which is the 8th bit of the second
 	// byte of the frame header.
-	frame[1] |= 0x80
+	// frame[1] |= 0x80
 
 	// Generate a random mask key, a 32-bit unsigned integer.
 	//
 	// https://tools.ietf.org/html/rfc6455#section-5.3
-	maskKeyBytes := make([]byte, 4)
-	rand.Read(maskKeyBytes)
+	// maskKeyBytes := make([]byte, 4)
+	// rand.Read(maskKeyBytes)
 
 	// Ensure the mask key is in network byte order.
 	// binary.BigEndian.PutUint32(maskKey, binary.BigEndian.Uint32(maskKey))
 
 	// Set make key bytes in frame
-	copy(frame[2:], maskKeyBytes)
+	// copy(frame[2:], maskKeyBytes)
 
 	// Mask the payload using the mask key.
 	// This is done in place to avoid an extra allocation.
 	// The mask key is repeated for each 4 bytes of the payload.
 	// The mask key is XORed with the payload.
-	for i := 0; i < len(payload); i++ {
-		payload[i] ^= maskKeyBytes[i%4]
-	}
+	// for i := 0; i < len(payload); i++ {
+	// 	payload[i] ^= maskKeyBytes[i%4]
+	// }
 
 	// Add the payload to the frame in place.
-	copy(frame[6:], payload)
+	// copy(frame[6:], payload)
+
+	copy(frame[2:], payload)
 
 	return frame
 }
@@ -619,6 +623,10 @@ func (w *FrameWriter) WriteFrame(f Frame) error {
 		}
 	}
 
+	if f.Masked() && !w.Masked {
+		f.Unmask()
+	}
+
 	// Write the frame to the writer.
 	_, err := w.Writer.Write(f)
 	return err
@@ -670,10 +678,10 @@ func (o Opcode) String() string {
 }
 
 // WriteFrame writes a frame to a writer.
-func WriteFrame(w io.Writer, f Frame) error {
+func WriteFrame(w io.Writer, f Frame, masked bool) error {
 	return (&FrameWriter{
 		Writer: w,
-		Masked: true,
+		Masked: masked,
 	}).WriteFrame(f)
 }
 

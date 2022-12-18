@@ -119,7 +119,7 @@ func TestWriteFrame(t *testing.T) {
 
 		writer := bytes.NewBuffer(nil)
 
-		err := websocket.WriteFrame(writer, frame)
+		err := websocket.WriteFrame(writer, frame, true)
 		if err != nil {
 			t.Fatal(err)
 		}
